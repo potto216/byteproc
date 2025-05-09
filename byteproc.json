@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "max_stream_size_kb": 64,
+
+  "input_type": "stdin",
+  "output_type": "stdout",
+
+  "xor_enabled": false,
+  "base64_enabled": false,
+
+  "log_enabled": true,
+  "log_level": "info",
+  "log_file": "byteproc.log",
+  "log_append": true,
+
+  "zmq_reconnect_interval_ms": 1000,
+  "zmq_max_reconnect_attempts": 5,
+  "zmq_send_timeout_ms": 5000,
+  "zmq_receive_timeout_ms": 5000,
+  "zmq_linger_ms": 0
+}
