@@ -6,11 +6,12 @@
   "output_type": "stdout",
 
   "xor_enabled": false,
+  "xor_key": "0123456789abcdef",
   "base64_enabled": false,
 
   "log_enabled": true,
   "log_level": "info",
-  "log_file": "byteproc.log",
+  "log_file": "./byteproc.log",
   "log_append": true,
 
   "zmq_reconnect_interval_ms": 1000,

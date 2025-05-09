@@ -69,12 +69,11 @@ impl ByteProcessor for Passthrough {
 /// XOR
 pub struct XorModule {
     key: XorKey,
-    encrypt: bool,
 }
 struct XorKey { key: Vec<u8> }
 impl Drop for XorKey { fn drop(&mut self) { self.key.zeroize(); } }
 impl XorModule {
-    pub fn new(hex_key: &str, pad_byte: Option<u8>, encrypt: bool) -> Result<Self, ByteProcError> {
+    pub fn new(hex_key: &str, pad_byte: Option<u8>) -> Result<Self, ByteProcError> {
         let raw = Vec::from_hex(hex_key)
             .map_err(|e| ByteProcError::HexDecode(e.to_string()))?;
         if raw.is_empty() {
@@ -85,7 +84,6 @@ impl XorModule {
         // Note: we'll cycle if pad_byte is None; no further action here
         Ok(XorModule {
             key: XorKey { key: raw },
-            encrypt,
         })
     }
 }
@@ -157,12 +155,10 @@ struct RawConfig {
     log_level: Option<String>,
     log_file: Option<String>,
     log_append: Option<bool>,
-    log_structured: Option<bool>,
     log_max_file_size_mb: Option<u64>,
     log_rotation_count: Option<usize>,
 
     xor_enabled: Option<bool>,
-    xor_mode: Option<String>,
     xor_key: Option<String>,
     xor_pad: Option<String>,
 
@@ -194,12 +190,10 @@ impl Default for RawConfig {
             log_level: Some("info".into()),
             log_file: Some("byteproc.log".into()),
             log_append: Some(true),
-            log_structured: Some(false),
             log_max_file_size_mb: Some(10),
             log_rotation_count: Some(5),
 
             xor_enabled: Some(false),
-            xor_mode: Some("encrypt".into()),
             xor_key: None,
             xor_pad: Some("00".into()),
 
@@ -239,7 +233,6 @@ pub struct Cli {
     #[arg(long)] max_stream_size_kb: Option<usize>,
 
     #[arg(long)] xor_enabled: Option<bool>,
-    #[arg(long)] xor_mode: Option<String>,
     #[arg(long)] xor_key: Option<String>,
     #[arg(long)] xor_pad: Option<String>,
 
@@ -269,10 +262,8 @@ pub struct Config {
     log_level: String,
     log_file: String,
     log_append: bool,
-    log_structured: bool,
 
     xor_enabled: bool,
-    xor_encrypt: bool,
     xor_key: Option<String>,
     xor_pad: Option<u8>,
 
@@ -330,7 +321,6 @@ impl Config {
                 log_level: file_cfg.log_level.or(raw.log_level),
                 log_file: file_cfg.log_file.or(raw.log_file),
                 log_append: file_cfg.log_append.or(raw.log_append),
-                log_structured: file_cfg.log_structured.or(raw.log_structured),
                 log_max_file_size_mb: file_cfg
                     .log_max_file_size_mb
                     .or(raw.log_max_file_size_mb),
@@ -338,7 +328,6 @@ impl Config {
                     .log_rotation_count
                     .or(raw.log_rotation_count),
                 xor_enabled: file_cfg.xor_enabled.or(raw.xor_enabled),
-                xor_mode: file_cfg.xor_mode.or(raw.xor_mode),
                 xor_key: file_cfg.xor_key.or(raw.xor_key),
                 xor_pad: file_cfg.xor_pad.or(raw.xor_pad),
                 base64_enabled: file_cfg.base64_enabled.or(raw.base64_enabled),
@@ -401,12 +390,8 @@ impl Config {
             override_str(cli.log_file, raw.log_file, "byteproc.log".into());
         let log_append =
             override_bool(cli.log_append, raw.log_append, true);
-        let log_structured =
-            override_bool(cli.log_structured, raw.log_structured, false);
 
         let xor_enabled = override_bool(cli.xor_enabled, raw.xor_enabled, false);
-        let xor_mode = override_str(cli.xor_mode, raw.xor_mode, "encrypt".into());
-        let xor_encrypt = xor_mode == "encrypt";
         let xor_key = cli.xor_key.or(raw.xor_key.clone());
         let xor_pad = cli
             .xor_pad
@@ -455,9 +440,7 @@ impl Config {
             log_level,
             log_file,
             log_append,
-            log_structured,
             xor_enabled,
-            xor_encrypt,
             xor_key,
             xor_pad,
             base64_enabled,
@@ -484,7 +467,6 @@ impl ModuleRegistry {
             let m = XorModule::new(
                 cfg.xor_key.as_ref().unwrap(),
                 cfg.xor_pad,
-                cfg.xor_encrypt,
             )?;
             modules.insert("xor", Box::new(m));
         }

@@ -207,9 +207,10 @@ Should use the following parameters:
 | JSON Key      | CLI Flag        | Type    | Description                                      |
 |---------------|-----------------|---------|--------------------------------------------------|
 | `xor_enabled` | `--xor-enabled` | boolean | Enable XOR processing                            |
-| `xor_mode`    | `--xor-mode`    | string  | `"encrypt"` or `"decrypt"`                       |
 | `xor_key`     | `--xor-key`     | string  | Hexadecimal XOR key (required, even length)      |
 | `xor_pad`     | `--xor-pad`     | string  | Optional 1-byte hex pad (default to cycle key)   |
+
+Note: `xor_mode` | `--xor-mode` of  `"encrypt"` or `"decrypt"` is not needed because xor inverts the previous operation
 
 Use secure memory handling (e.g., zeroizing keys after use). For example:
 ```
