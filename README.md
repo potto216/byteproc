@@ -35,7 +35,7 @@
 
 Install Rust (if not already):
 
-```bash
+```
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup install stable
 rustup default stable
@@ -47,7 +47,7 @@ rustup default stable
 
 Clone and build the project:
 
-```bash
+```
 git clone https://github.com/youruser/byteproc.git
 cd byteproc
 cargo build --release
@@ -66,7 +66,7 @@ Byteproc can be configured via:
 
 Example `byteproc.json`:
 
-```json
+```
 {
   "schema_version": "1.0",
   "log_enabled": true,
@@ -87,7 +87,7 @@ Example `byteproc.json`:
 
 Process a hex string from stdin and output the result to stdout:
 
-```bash
+```
 echo "deadbeef" | ./target/release/byteproc
 ```
 
@@ -95,7 +95,7 @@ echo "deadbeef" | ./target/release/byteproc
 
 Enable XOR processing with a key:
 
-```bash
+```
 echo "00112233" | ./target/release/byteproc \
   --xor-enabled true \
   --xor-key abcd1234
@@ -105,7 +105,7 @@ echo "00112233" | ./target/release/byteproc \
 
 Specify log level, log file location, and append mode:
 
-```bash
+```
 echo "48656c6c6f20776f726c64" | ./target/release/byteproc \
   --log-enabled true \
   --log-level debug \
@@ -117,23 +117,72 @@ echo "48656c6c6f20776f726c64" | ./target/release/byteproc \
 
 ### ZeroMQ Integration
 
-#### Terminal A (Sink / PULL)
+Byteproc operates as a **single-shot processor** when using ZeroMQ - each instance processes exactly one message and then exits. This is important to understand when setting up ZMQ communication.
 
+#### Basic ZeroMQ Setup
+
+##### Terminal A (Sink / PULL)
 ```bash
+# This instance will wait for ONE message, process it, then exit
 ./target/release/byteproc \
   --input-type zmq_pull \
   --input-zmq-socket tcp://*:5555 \
-  --input-zmq-bind true
+  --input-zmq-bind true \
+  --zmq-receive-timeout-ms 10000  # Increase timeout to 10 seconds
 ```
 
-#### Terminal B (Source / PUSH)
-
+##### Terminal B (Source / PUSH)
 ```bash
+# Send a single message
 echo "cafebabe" | ./target/release/byteproc \
   --output-type zmq_push \
   --output-zmq-socket tcp://localhost:5555 \
   --output-zmq-bind false
 ```
+
+#### Important Timing Considerations
+
+1. **Start the PULL instance first** - The receiving side must be ready before sending any messages.
+2. **Send within the timeout period** - By default, the PULL socket times out after 5 seconds if no message arrives.
+3. **One message per instance** - Each byteproc instance only processes a single message before exiting.
+
+#### Avoiding Timeouts
+
+To avoid the "Resource temporarily unavailable" error:
+
+1. **Increase the timeout**:
+   ```bash
+   --zmq-receive-timeout-ms 30000  # Set to 30 seconds
+   ```
+
+2. **Use unlimited timeout** (wait forever):
+   ```bash
+   --zmq-receive-timeout-ms -1  # Wait indefinitely
+   ```
+
+#### Continuous Processing with ZMQ
+
+For continuous processing, use a shell loop:
+
+```bash
+# Terminal A: Continuous receiver
+while true; do
+  ./target/release/byteproc \
+    --input-type zmq_pull \
+    --input-zmq-socket tcp://*:5555 \
+    --input-zmq-bind true
+  echo "Waiting for next message..."
+  sleep 0.1  # Small delay between instances
+done
+```
+
+#### Flow Control
+
+When chaining multiple byteproc instances:
+
+1. **Start all receivers first** - Work backwards from the final consumer.
+2. **Start senders last** - Send data only after all receivers are ready.
+3. **Add delays between messages** - Allow time for processing between messages.
 
 ---
 
@@ -167,7 +216,7 @@ See `./target/release/byteproc --help` for the full list.
 
 Run all tests:
 
-```bash
+```
 cargo test
 ```
 

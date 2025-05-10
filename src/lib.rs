@@ -3,7 +3,7 @@
 pub mod processor {
 use clap::Parser;
 use hex::FromHex;
-use log::{ info, LevelFilter};
+use log::{ info,error, LevelFilter};
 use serde::Deserialize;
 use simplelog::{ConfigBuilder, WriteLogger};
 use std::{
@@ -496,7 +496,13 @@ impl ModuleRegistry {
 // -------------- Main --------------
 
 pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
-
+    // Generate a unique instance ID for this run
+    let instance_id = format!("pid-{}-{:x}", std::process::id(), 
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() & 0xFFFF);
+    
     if cfg.log_enabled {
         let level = LevelFilter::from_str(&cfg.log_level).unwrap_or(LevelFilter::Info);
         let file = OpenOptions::new()
@@ -504,12 +510,23 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
             .create(true)
             .open(&cfg.log_file)
             .map_err(|e| ByteProcError::Io(e.to_string()))?;
+        
+        // Configure logger with instance ID in the format
         let log_cfg = ConfigBuilder::new()
             .set_time_format_str("%+")
+            .set_thread_level(LevelFilter::Off)  // Turn off thread ID logging
+            .set_target_level(LevelFilter::Off)  // Turn off target logging
+            .set_location_level(LevelFilter::Off) // Turn off code location
+            .add_filter_ignore_str("mio")  // Ignore noisy libraries
+            .set_time_to_local(true)
             .build();
+        
         WriteLogger::init(level, log_cfg, file).unwrap();
+        
+        // Log the start of this instance
+        info!("[{}] Byteproc starting up", instance_id);
     }
-
+    
     // Prepare ZeroMQ if needed
     let context = Context::new();
     let mut input_socket: Option<Socket> = None;
@@ -522,8 +539,12 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
         sock.set_rcvtimeo(cfg.zmq_receive_timeout_ms)?;
         sock.set_linger(cfg.zmq_linger_ms)?;
         if cfg.input_zmq_bind {
+            info!("[{}] Binding PULL socket to {}", instance_id, 
+                cfg.input_zmq_socket.as_ref().unwrap());
             sock.bind(cfg.input_zmq_socket.as_ref().unwrap())?;
         } else {
+            info!("[{}] Connecting PULL socket to {}", instance_id,
+                cfg.input_zmq_socket.as_ref().unwrap());
             sock.connect(cfg.input_zmq_socket.as_ref().unwrap())?;
         }
         input_socket = Some(sock);
@@ -546,21 +567,39 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     // Read input
     let raw_hex = if cfg.input_type == "stdin" {
         let mut s = String::new();
+        info!("[{}] Reading from stdin...", instance_id);
         io::stdin().read_to_string(&mut s)
             .map_err(|e| ByteProcError::Io(e.to_string()))?;
+        info!("[{}] Finished reading from stdin ({} chars)", instance_id, s.trim().len());
         s.trim().to_string()
     } else {
-        let msg = input_socket
+        // This is the zmq_pull case
+        let socket_ref = input_socket
             .as_ref()
-            .unwrap()
+            .ok_or_else(|| ByteProcError::InvalidConfiguration("Input socket not initialized for ZMQ".into()))?;
+
+        info!(
+            "[{}] Waiting for ZMQ message on PULL socket (timeout: {}ms)...",
+            instance_id, cfg.zmq_receive_timeout_ms
+        );
+        let msg = socket_ref
             .recv_msg(0)
-            .map_err(|e| ByteProcError::Zmq(e.to_string()))?;
-        msg.as_str()
-            .ok_or_else(|| ByteProcError::HexDecode("Invalid UTF-8 from ZMQ".into()))?
-            .trim()
-            .to_string()
+            .map_err(|e| {
+                error!("[{}] ZMQ recv_msg error: {}", instance_id, e);
+                ByteProcError::Zmq(e.to_string())
+            })?;
+        info!("[{}] Received ZMQ message ({} bytes)", instance_id, msg.len());
+
+        let s = msg.as_str()
+            .ok_or_else(|| {
+                error!("[{}] Failed to convert ZMQ message to UTF-8 string", instance_id);
+                ByteProcError::HexDecode("Invalid UTF-8 from ZMQ".into())
+            })?;
+        info!("[{}] Successfully converted ZMQ message to string ({} chars)", 
+            instance_id, s.trim().len());
+        s.trim().to_string()
     };
-    info!("Received hex input (len={} chars)", raw_hex.len());
+    info!("[{}] Received hex input (len={} chars)", instance_id, raw_hex.len());
 
     // Decode hex
     let bytes = Vec::from_hex(&raw_hex)
@@ -590,6 +629,8 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
             .send(&out_hex, 0)
             .map_err(|e| ByteProcError::Zmq(e.to_string()))?;
     }
+
+    info!("[{}] Processing complete", instance_id);
 
     Ok(())
 }
