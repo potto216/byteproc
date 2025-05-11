@@ -18,6 +18,7 @@ use std::{
 use base64::Engine;
 use zeroize::Zeroize;
 use zmq::{Context, Socket};
+use std::sync::OnceLock;
 
 // -------------- Error type --------------
 
@@ -133,321 +134,335 @@ impl ByteProcessor for Base64Module {
 
 // -------------- Config structures --------------
 
-#[derive(Deserialize)]
-struct RawConfig {
-    schema_version: Option<String>,
-    max_stream_size_kb: Option<usize>,
+#[derive(Parser, Deserialize, Debug, Clone)]
+#[command(name = "byteproc")]
+pub struct Config {
+    /// Path to config file
+    #[arg(long)]
+    #[serde(skip)]
+    pub config: Option<PathBuf>,
 
-    input_type: Option<String>,
-    input_zmq_socket: Option<String>,
-    input_zmq_bind: Option<bool>,
-    output_type: Option<String>,
-    output_zmq_socket: Option<String>,
-    output_zmq_bind: Option<bool>,
+    /// Maximum stream size in KB
+    #[arg(long, default_value_t = 64)]
+    #[serde(default = "default_max_stream_size_kb")]
+    pub max_stream_size_kb: usize,
 
-    zmq_reconnect_interval_ms: Option<u32>,
-    zmq_max_reconnect_attempts: Option<u32>,
-    zmq_send_timeout_ms: Option<i32>,
-    zmq_receive_timeout_ms: Option<i32>,
-    zmq_linger_ms: Option<i32>,
+    // Input/Output options
+    #[arg(long, default_value = "stdin")]
+    #[serde(default = "default_input_type")]
+    pub input_type: String,
 
-    log_enabled: Option<bool>,
-    log_level: Option<String>,
-    log_file: Option<String>,
-    log_append: Option<bool>,
-    log_max_file_size_mb: Option<u64>,
-    log_rotation_count: Option<usize>,
+    #[arg(long)]
+    #[serde(default)]
+    pub input_zmq_socket: Option<String>,
 
-    xor_enabled: Option<bool>,
-    xor_key: Option<String>,
-    xor_pad: Option<String>,
+    #[arg(long, default_value_t = false)]
+    #[serde(default)]
+    pub input_zmq_bind: bool,
 
-    base64_enabled: Option<bool>,
-    base64_mode: Option<String>,
-    base64_padding: Option<bool>,
+    #[arg(long, default_value = "stdout")]
+    #[serde(default = "default_output_type")]
+    pub output_type: String,
+
+    #[arg(long)]
+    #[serde(default)]
+    pub output_zmq_socket: Option<String>,
+
+    #[arg(long, default_value_t = false)]
+    #[serde(default)]
+    pub output_zmq_bind: bool,
+
+    // ZMQ options
+    #[arg(long, default_value_t = 1000)]
+    #[serde(default = "default_zmq_reconnect_interval_ms")]
+    pub zmq_reconnect_interval_ms: u32,
+
+    #[arg(long, default_value_t = 5)]
+    #[serde(default = "default_zmq_max_reconnect_attempts")]
+    pub zmq_max_reconnect_attempts: u32,
+
+    #[arg(long, default_value_t = 5000)]
+    #[serde(default = "default_zmq_send_timeout_ms")]
+    pub zmq_send_timeout_ms: i32,
+
+    #[arg(long, default_value_t = 5000)]
+    #[serde(default = "default_zmq_receive_timeout_ms")]
+    pub zmq_receive_timeout_ms: i32,
+
+    #[arg(long, default_value_t = 0)]
+    #[serde(default = "default_zmq_linger_ms")]
+    pub zmq_linger_ms: i32,
+
+    // Logging options
+    #[arg(long, default_value_t = true)]
+    #[serde(default = "default_log_enabled")]
+    pub log_enabled: bool,
+
+    #[arg(long, default_value = "info")]
+    #[serde(default = "default_log_level")]
+    pub log_level: String,
+
+    #[arg(long, default_value = "byteproc.log")]
+    #[serde(default = "default_log_file")]
+    pub log_file: String,
+
+    #[arg(long, default_value_t = true)]
+    #[serde(default = "default_log_append")]
+    pub log_append: bool,
+
+    // Processing modules
+    #[arg(long, default_value_t = false)]
+    #[serde(default)]
+    pub xor_enabled: bool,
+
+    #[arg(long)]
+    #[serde(default)]
+    pub xor_key: Option<String>,
+
+    #[arg(long, default_value = "00")]
+    #[serde(default = "default_xor_pad")]
+    pub xor_pad: String,
+
+    #[arg(long, default_value_t = false)]
+    #[serde(default)]
+    pub base64_enabled: bool,
+
+    #[arg(long, default_value = "encode")]
+    #[serde(default = "default_base64_mode")]
+    pub base64_mode: String,
+
+    #[arg(long, default_value_t = true)]
+    #[serde(default = "default_base64_padding")]
+    pub base64_padding: bool,
 }
 
-impl Default for RawConfig {
+// Default function implementations
+fn default_max_stream_size_kb() -> usize { 64 }
+fn default_input_type() -> String { "stdin".into() }
+fn default_output_type() -> String { "stdout".into() }
+fn default_zmq_reconnect_interval_ms() -> u32 { 1000 }
+fn default_zmq_max_reconnect_attempts() -> u32 { 5 }
+fn default_zmq_send_timeout_ms() -> i32 { 5000 }
+fn default_zmq_receive_timeout_ms() -> i32 { 5000 }
+fn default_zmq_linger_ms() -> i32 { 0 }
+fn default_log_enabled() -> bool { true }
+fn default_log_level() -> String { "info".into() }
+fn default_log_file() -> String { "byteproc.log".into() }
+fn default_log_append() -> bool { true }
+fn default_xor_pad() -> String { "00".into() }
+fn default_base64_mode() -> String { "encode".into() }
+fn default_base64_padding() -> bool { true }
+
+// Implement the Default trait for Config
+impl Default for Config {
     fn default() -> Self {
-        RawConfig {
-            schema_version: Some("1.0".into()),
-            max_stream_size_kb: Some(64),
-
-            input_type: Some("stdin".into()),
+        Config {
+            config: None,
+            max_stream_size_kb: default_max_stream_size_kb(),
+            input_type: default_input_type(),
             input_zmq_socket: None,
-            input_zmq_bind: Some(false),
-            output_type: Some("stdout".into()),
+            input_zmq_bind: false, // Default for bool
+            output_type: default_output_type(),
             output_zmq_socket: None,
-            output_zmq_bind: Some(false),
-
-            zmq_reconnect_interval_ms: Some(1000),
-            zmq_max_reconnect_attempts: Some(5),
-            zmq_send_timeout_ms: Some(5000),
-            zmq_receive_timeout_ms: Some(5000),
-            zmq_linger_ms: Some(0),
-
-            log_enabled: Some(true),
-            log_level: Some("info".into()),
-            log_file: Some("byteproc.log".into()),
-            log_append: Some(true),
-            log_max_file_size_mb: Some(10),
-            log_rotation_count: Some(5),
-
-            xor_enabled: Some(false),
+            output_zmq_bind: false, // Default for bool
+            zmq_reconnect_interval_ms: default_zmq_reconnect_interval_ms(),
+            zmq_max_reconnect_attempts: default_zmq_max_reconnect_attempts(),
+            zmq_send_timeout_ms: default_zmq_send_timeout_ms(),
+            zmq_receive_timeout_ms: default_zmq_receive_timeout_ms(),
+            zmq_linger_ms: default_zmq_linger_ms(),
+            log_enabled: default_log_enabled(),
+            log_level: default_log_level(),
+            log_file: default_log_file(),
+            log_append: default_log_append(),
+            xor_enabled: false, // Default for bool
             xor_key: None,
-            xor_pad: Some("00".into()),
-
-            base64_enabled: Some(false),
-            base64_mode: Some("encode".into()),
-            base64_padding: Some(true),
+            xor_pad: default_xor_pad(),
+            base64_enabled: false, // Default for bool
+            base64_mode: default_base64_mode(),
+            base64_padding: default_base64_padding(),
         }
     }
 }
 
-#[derive(Parser)]
-#[command(name = "byteproc")]
-pub struct Cli {
-    /// Path to config file
-    #[arg(long)]
-    config: Option<PathBuf>,
-
-    #[arg(long)] input_type: Option<String>,
-    #[arg(long)] input_zmq_socket: Option<String>,
-    #[arg(long)] input_zmq_bind: Option<bool>,
-    #[arg(long)] output_type: Option<String>,
-    #[arg(long)] output_zmq_socket: Option<String>,
-    #[arg(long)] output_zmq_bind: Option<bool>,
-
-    #[arg(long)] zmq_reconnect_interval_ms: Option<u32>,
-    #[arg(long)] zmq_max_reconnect_attempts: Option<u32>,
-    #[arg(long)] zmq_send_timeout_ms: Option<i32>,
-    #[arg(long)] zmq_receive_timeout_ms: Option<i32>,
-    #[arg(long)] zmq_linger_ms: Option<i32>,
-
-    #[arg(long)] log_enabled: Option<bool>,
-    #[arg(long)] log_level: Option<String>,
-    #[arg(long)] log_file: Option<String>,
-    #[arg(long)] log_append: Option<bool>,
-    #[arg(long)] log_structured: Option<bool>,
-
-    #[arg(long)] max_stream_size_kb: Option<usize>,
-
-    #[arg(long)] xor_enabled: Option<bool>,
-    #[arg(long)] xor_key: Option<String>,
-    #[arg(long)] xor_pad: Option<String>,
-
-    #[arg(long)] base64_enabled: Option<bool>,
-    #[arg(long)] base64_mode: Option<String>,
-    #[arg(long)] base64_padding: Option<bool>,
-}
-
-#[derive(Debug)]
-pub struct Config {
-    max_stream_size: usize,
-
-    input_type: String,
-    input_zmq_socket: Option<String>,
-    input_zmq_bind: bool,
-    output_type: String,
-    output_zmq_socket: Option<String>,
-    output_zmq_bind: bool,
-
-    zmq_reconnect_interval_ms: u32,
-    zmq_max_reconnect_attempts: u32,
-    zmq_send_timeout_ms: i32,
-    zmq_receive_timeout_ms: i32,
-    zmq_linger_ms: i32,
-
-    log_enabled: bool,
-    log_level: String,
-    log_file: String,
-    log_append: bool,
-
-    xor_enabled: bool,
-    xor_key: Option<String>,
-    xor_pad: Option<u8>,
-
-    base64_enabled: bool,
-    base64_encode: bool,
-    base64_padding: bool,
-}
-
 impl Config {
-    pub fn from(cli: Cli) -> Result<Self, ByteProcError> {
-        // 1) Determine config file path
-        let path = if let Some(cfg) = cli.config {
-            cfg
-        } else if let Ok(env) = std::env::var("BYTEPROC_CONFIG") {
-            PathBuf::from(env)
+    /// Calculated field: Maximum stream size in bytes
+    pub fn max_stream_size(&self) -> Result<usize, ByteProcError> {
+        self.max_stream_size_kb
+            .checked_mul(1024)
+            .ok_or_else(|| ByteProcError::InvalidConfiguration("max_stream_size_kb too large".into()))
+    }
+    
+    /// Calculated field: Base64 encode mode
+    pub fn base64_encode(&self) -> bool {
+        self.base64_mode == "encode"
+    }
+    
+    /// Calculated field: XOR pad byte
+    pub fn xor_pad_byte(&self) -> Option<u8> {
+        u8::from_str_radix(&self.xor_pad, 16).ok()
+    }
+    
+    /// Load configuration from command line and optional config file
+    pub fn load() -> Result<Self, ByteProcError> {
+        // Parse command line args first
+        let cli_args = Self::parse(); // Renamed to cli_args to avoid confusion with config variable
+        
+        // Determine if we should load from a file
+        let mut config_from_file = if let Some(path) = &cli_args.config {
+            // Explicitly provided config file
+            Self::from_file(path)?
+        } else if let Ok(env_path) = std::env::var("BYTEPROC_CONFIG") {
+            // Config file from environment variable
+            Self::from_file(&PathBuf::from(env_path))?
         } else if PathBuf::from("byteproc.json").exists() {
-            PathBuf::from("byteproc.json")
+            // Default config file in current directory
+            Self::from_file(&PathBuf::from("byteproc.json"))?
         } else {
-            PathBuf::from("./byteproc.json") // final fallback
+            // No config file, use defaults
+            Self::default()
         };
+        
+        // Override file/default values with CLI values where provided
+        // We check if the CLI arg was actually passed by clap or if it's using its own default.
+        // This requires checking against the default values defined by clap for simple types,
+        // or checking if Option types are Some.
 
-        // 2) Load JSON
-        let mut raw = RawConfig::default();
-        if let Ok(f) = File::open(&path) {
-            let mut s = String::new();
-            let mut rdr = io::BufReader::new(f);
-            rdr.read_to_string(&mut s)
-                .map_err(|e| ByteProcError::Io(e.to_string()))?;
-            let file_cfg: RawConfig =
-                serde_json::from_str(&s).map_err(|e| ByteProcError::Io(e.to_string()))?;
-            // merge file_cfg into raw
-            raw = RawConfig {
-                schema_version: file_cfg.schema_version.or(raw.schema_version),
-                max_stream_size_kb: file_cfg.max_stream_size_kb.or(raw.max_stream_size_kb),
-                input_type: file_cfg.input_type.or(raw.input_type),
-                input_zmq_socket: file_cfg.input_zmq_socket.or(raw.input_zmq_socket),
-                input_zmq_bind: file_cfg.input_zmq_bind.or(raw.input_zmq_bind),
-                output_type: file_cfg.output_type.or(raw.output_type),
-                output_zmq_socket: file_cfg.output_zmq_socket.or(raw.output_zmq_socket),
-                output_zmq_bind: file_cfg.output_zmq_bind.or(raw.output_zmq_bind),
-                zmq_reconnect_interval_ms: file_cfg
-                    .zmq_reconnect_interval_ms
-                    .or(raw.zmq_reconnect_interval_ms),
-                zmq_max_reconnect_attempts: file_cfg
-                    .zmq_max_reconnect_attempts
-                    .or(raw.zmq_max_reconnect_attempts),
-                zmq_send_timeout_ms: file_cfg
-                    .zmq_send_timeout_ms
-                    .or(raw.zmq_send_timeout_ms),
-                zmq_receive_timeout_ms: file_cfg
-                    .zmq_receive_timeout_ms
-                    .or(raw.zmq_receive_timeout_ms),
-                zmq_linger_ms: file_cfg.zmq_linger_ms.or(raw.zmq_linger_ms),
-                log_enabled: file_cfg.log_enabled.or(raw.log_enabled),
-                log_level: file_cfg.log_level.or(raw.log_level),
-                log_file: file_cfg.log_file.or(raw.log_file),
-                log_append: file_cfg.log_append.or(raw.log_append),
-                log_max_file_size_mb: file_cfg
-                    .log_max_file_size_mb
-                    .or(raw.log_max_file_size_mb),
-                log_rotation_count: file_cfg
-                    .log_rotation_count
-                    .or(raw.log_rotation_count),
-                xor_enabled: file_cfg.xor_enabled.or(raw.xor_enabled),
-                xor_key: file_cfg.xor_key.or(raw.xor_key),
-                xor_pad: file_cfg.xor_pad.or(raw.xor_pad),
-                base64_enabled: file_cfg.base64_enabled.or(raw.base64_enabled),
-                base64_mode: file_cfg.base64_mode.or(raw.base64_mode),
-                base64_padding: file_cfg.base64_padding.or(raw.base64_padding),
-            };
+        // Create a default instance of CLI args to compare against
+        let default_cli_args = Self::try_parse_from(&["byteproc"]).unwrap_or_else(|_| Self::default());
+
+
+        if cli_args.max_stream_size_kb != default_cli_args.max_stream_size_kb {
+            config_from_file.max_stream_size_kb = cli_args.max_stream_size_kb;
+        }
+        if cli_args.input_type != default_cli_args.input_type {
+            config_from_file.input_type = cli_args.input_type;
+        }
+        if cli_args.input_zmq_socket.is_some() { // For Option types, just check if Some
+            config_from_file.input_zmq_socket = cli_args.input_zmq_socket;
+        }
+        if cli_args.input_zmq_bind != default_cli_args.input_zmq_bind {
+             config_from_file.input_zmq_bind = cli_args.input_zmq_bind;
+        }
+        if cli_args.output_type != default_cli_args.output_type {
+            config_from_file.output_type = cli_args.output_type;
+        }
+        if cli_args.output_zmq_socket.is_some() {
+            config_from_file.output_zmq_socket = cli_args.output_zmq_socket;
+        }
+        if cli_args.output_zmq_bind != default_cli_args.output_zmq_bind {
+            config_from_file.output_zmq_bind = cli_args.output_zmq_bind;
+        }
+        if cli_args.zmq_reconnect_interval_ms != default_cli_args.zmq_reconnect_interval_ms {
+            config_from_file.zmq_reconnect_interval_ms = cli_args.zmq_reconnect_interval_ms;
+        }
+        if cli_args.zmq_max_reconnect_attempts != default_cli_args.zmq_max_reconnect_attempts {
+            config_from_file.zmq_max_reconnect_attempts = cli_args.zmq_max_reconnect_attempts;
+        }
+        if cli_args.zmq_send_timeout_ms != default_cli_args.zmq_send_timeout_ms {
+            config_from_file.zmq_send_timeout_ms = cli_args.zmq_send_timeout_ms;
+        }
+        if cli_args.zmq_receive_timeout_ms != default_cli_args.zmq_receive_timeout_ms {
+            config_from_file.zmq_receive_timeout_ms = cli_args.zmq_receive_timeout_ms;
+        }
+        if cli_args.zmq_linger_ms != default_cli_args.zmq_linger_ms {
+            config_from_file.zmq_linger_ms = cli_args.zmq_linger_ms;
+        }
+        if cli_args.log_enabled != default_cli_args.log_enabled {
+            config_from_file.log_enabled = cli_args.log_enabled;
+        }
+        if cli_args.log_level != default_cli_args.log_level {
+            config_from_file.log_level = cli_args.log_level;
+        }
+        if cli_args.log_file != default_cli_args.log_file {
+            config_from_file.log_file = cli_args.log_file;
+        }
+        if cli_args.log_append != default_cli_args.log_append {
+            config_from_file.log_append = cli_args.log_append;
+        }
+        if cli_args.xor_enabled != default_cli_args.xor_enabled {
+            config_from_file.xor_enabled = cli_args.xor_enabled;
+        }
+        if cli_args.xor_key.is_some() {
+            config_from_file.xor_key = cli_args.xor_key;
+        }
+        if cli_args.xor_pad != default_cli_args.xor_pad {
+            config_from_file.xor_pad = cli_args.xor_pad;
+        }
+        if cli_args.base64_enabled != default_cli_args.base64_enabled {
+            config_from_file.base64_enabled = cli_args.base64_enabled;
+        }
+        if cli_args.base64_mode != default_cli_args.base64_mode {
+            config_from_file.base64_mode = cli_args.base64_mode;
+        }
+        if cli_args.base64_padding != default_cli_args.base64_padding {
+            config_from_file.base64_padding = cli_args.base64_padding;
         }
 
-        // 3) Override with CLI
-        let override_str = |cli: Option<String>, raw: Option<String>, default: String| {
-            cli.or(raw).unwrap_or(default)
-        };
-        let override_bool = |cli: Option<bool>, raw: Option<bool>, default: bool| {
-            cli.or(raw).unwrap_or(default)
-        };
-
-        let max_stream_size =
-            cli.max_stream_size_kb
-                .or(raw.max_stream_size_kb)
-                .unwrap()
-                .checked_mul(1024)
-                .ok_or_else(|| {
-                    ByteProcError::InvalidConfiguration("max_stream_size_kb too large".into())
-                })?;
-
-        let input_type = override_str(cli.input_type, raw.input_type, "stdin".into());
-        let input_zmq_socket = cli
-            .input_zmq_socket
-            .or(raw.input_zmq_socket.clone());
-        let input_zmq_bind =
-            override_bool(cli.input_zmq_bind, raw.input_zmq_bind, false);
-
-        let output_type = override_str(cli.output_type, raw.output_type, "stdout".into());
-        let output_zmq_socket = cli
-            .output_zmq_socket
-            .or(raw.output_zmq_socket.clone());
-        let output_zmq_bind =
-            override_bool(cli.output_zmq_bind, raw.output_zmq_bind, false);
-
-        let zmq_reconnect_interval_ms = cli
-            .zmq_reconnect_interval_ms
-            .or(raw.zmq_reconnect_interval_ms)
-            .unwrap();
-        let zmq_max_reconnect_attempts = cli
-            .zmq_max_reconnect_attempts
-            .or(raw.zmq_max_reconnect_attempts)
-            .unwrap();
-        let zmq_send_timeout_ms =
-            cli.zmq_send_timeout_ms.or(raw.zmq_send_timeout_ms).unwrap();
-        let zmq_receive_timeout_ms = cli
-            .zmq_receive_timeout_ms
-            .or(raw.zmq_receive_timeout_ms)
-            .unwrap();
-        let zmq_linger_ms = cli.zmq_linger_ms.or(raw.zmq_linger_ms).unwrap();
-
-        let log_enabled = override_bool(cli.log_enabled, raw.log_enabled, true);
-        let log_level =
-            override_str(cli.log_level, raw.log_level, "info".into());
-        let log_file =
-            override_str(cli.log_file, raw.log_file, "byteproc.log".into());
-        let log_append =
-            override_bool(cli.log_append, raw.log_append, true);
-
-        let xor_enabled = override_bool(cli.xor_enabled, raw.xor_enabled, false);
-        let xor_key = cli.xor_key.or(raw.xor_key.clone());
-        let xor_pad = cli
-            .xor_pad
-            .or(raw.xor_pad.clone())
-            .and_then(|s| u8::from_str_radix(&s, 16).ok());
-
-        let base64_enabled =
-            override_bool(cli.base64_enabled, raw.base64_enabled, false);
-        let base64_mode =
-            override_str(cli.base64_mode, raw.base64_mode, "encode".into());
-        let base64_encode = base64_mode == "encode";
-        let base64_padding =
-            override_bool(cli.base64_padding, raw.base64_padding, true);
-
-        // 4) Validate
-        if input_type == "zmq_pull" && input_zmq_socket.is_none() {
+        // The config path itself from CLI should always override
+        if cli_args.config.is_some() {
+            config_from_file.config = cli_args.config;
+        }
+        
+        // Validate the final configuration
+        config_from_file.validate()?;
+        
+        Ok(config_from_file)
+    }
+    
+    /// Load configuration from a file
+    fn from_file(path: &PathBuf) -> Result<Self, ByteProcError> {
+        let file = File::open(path)
+            .map_err(|e| ByteProcError::Io(format!("Failed to open config file: {}", e)))?;
+            
+        let mut reader = io::BufReader::new(file);
+        let mut contents = String::new();
+        reader.read_to_string(&mut contents)
+            .map_err(|e| ByteProcError::Io(format!("Failed to read config file: {}", e)))?;
+            
+        serde_json::from_str(&contents)
+            .map_err(|e| ByteProcError::Io(format!("Failed to parse config file: {}", e)))
+    }
+    
+    /// Validate the configuration
+    fn validate(&self) -> Result<(), ByteProcError> {
+        // Check required fields for specific input/output types
+        if self.input_type == "zmq_pull" && self.input_zmq_socket.is_none() {
             return Err(ByteProcError::InvalidConfiguration(
                 "input_zmq_socket must be set for zmq_pull".into(),
             ));
         }
-        if output_type == "zmq_push" && output_zmq_socket.is_none() {
+        
+        if self.output_type == "zmq_push" && self.output_zmq_socket.is_none() {
             return Err(ByteProcError::InvalidConfiguration(
                 "output_zmq_socket must be set for zmq_push".into(),
             ));
         }
-        if xor_enabled && xor_key.is_none() {
+        
+        if self.xor_enabled && self.xor_key.is_none() {
             return Err(ByteProcError::InvalidConfiguration(
                 "xor_key must be set if xor_enabled".into(),
             ));
         }
-
-        Ok(Config {
-            max_stream_size,
-            input_type,
-            input_zmq_socket,
-            input_zmq_bind,
-            output_type,
-            output_zmq_socket,
-            output_zmq_bind,
-            zmq_reconnect_interval_ms,
-            zmq_max_reconnect_attempts,
-            zmq_send_timeout_ms,
-            zmq_receive_timeout_ms,
-            zmq_linger_ms,
-            log_enabled,
-            log_level,
-            log_file,
-            log_append,
-            xor_enabled,
-            xor_key,
-            xor_pad,
-            base64_enabled,
-            base64_encode,
-            base64_padding,
-        })
+        
+        Ok(())
     }
+}
+
+// -------------- Helpers --------------
+// Static instance ID initialized on first access
+static INSTANCE_ID: OnceLock<String> = OnceLock::new();
+
+/// Generate a unique instance identifier for logging
+/// The ID is generated only once per process and then reused
+fn make_instance_id() -> &'static str {
+    INSTANCE_ID.get_or_init(|| {
+        format!("pid-{}-{:x}", 
+            std::process::id(), 
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_micros() & 0xFFFF)
+    })
 }
 
 // -------------- Module registry --------------
@@ -466,14 +481,14 @@ impl ModuleRegistry {
         if cfg.xor_enabled {
             let m = XorModule::new(
                 cfg.xor_key.as_ref().unwrap(),
-                cfg.xor_pad,
+                cfg.xor_pad_byte(),
             )?;
             modules.insert("xor", Box::new(m));
         }
 
         // Base64
         if cfg.base64_enabled {
-            let m = Base64Module::new(cfg.base64_encode, cfg.base64_padding);
+            let m = Base64Module::new(cfg.base64_encode(), cfg.base64_padding);
             modules.insert("base64", Box::new(m));
         }
 
@@ -485,8 +500,9 @@ impl ModuleRegistry {
         &self,
         mut data: Vec<u8>,
     ) -> Result<Vec<u8>, ByteProcError> {
+        let instance_id = make_instance_id();
         for (name, module) in &self.modules {
-            info!("Running module: {}", name);
+            info!("[{}] Processing with module: {}", instance_id, name);
             data = module.process(&data)?;
         }
         Ok(data)
@@ -497,11 +513,7 @@ impl ModuleRegistry {
 
 pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     // Generate a unique instance ID for this run
-    let instance_id = format!("pid-{}-{:x}", std::process::id(), 
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() & 0xFFFF);
+    let instance_id = make_instance_id();
     
     if cfg.log_enabled {
         let level = LevelFilter::from_str(&cfg.log_level).unwrap_or(LevelFilter::Info);
@@ -604,16 +616,16 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     // Decode hex
     let bytes = Vec::from_hex(&raw_hex)
         .map_err(|e| ByteProcError::HexDecode(e.to_string()))?;
-    if bytes.len() > cfg.max_stream_size {
-        return Err(ByteProcError::MaxSizeExceeded(cfg.max_stream_size, bytes.len()).into());
+    if bytes.len() > cfg.max_stream_size()? {
+        return Err(ByteProcError::MaxSizeExceeded(cfg.max_stream_size()?, bytes.len()).into());
     }
 
     // Process modules
     let registry = ModuleRegistry::new(&cfg)?;
     let processed = registry.process_all(bytes)?;
 
-    if processed.len() > cfg.max_stream_size {
-        return Err(ByteProcError::MaxSizeExceeded(cfg.max_stream_size, processed.len()).into());
+    if processed.len() > cfg.max_stream_size()? {
+        return Err(ByteProcError::MaxSizeExceeded(cfg.max_stream_size()?, processed.len()).into());
     }
 
     // Encode hex
@@ -638,13 +650,9 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
 
 }
 
-use clap::Parser; // Add this import at the top of the file
-
 /// A convenient entrypoint for the binary:
 pub fn run_app() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = crate::processor::Cli::parse();
-    let cfg = crate::processor::Config::from(cli)?;
-    
-    crate::processor::main_internal(cfg)?; // Call the refactored main logic
+    let cfg = crate::processor::Config::load()?;
+    crate::processor::main_internal(cfg)?;
     Ok(())
 }
