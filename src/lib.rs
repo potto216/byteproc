@@ -244,7 +244,7 @@ fn default_zmq_reconnect_interval_ms() -> u32 { 1000 }
 fn default_zmq_max_reconnect_attempts() -> u32 { 5 }
 fn default_zmq_send_timeout_ms() -> i32 { 5000 }
 fn default_zmq_receive_timeout_ms() -> i32 { 5000 }
-fn default_zmq_linger_ms() -> i32 { 0 }
+fn default_zmq_linger_ms() -> i32 { 3000 }
 fn default_log_enabled() -> bool { true }
 fn default_log_level() -> String { "info".into() }
 fn default_log_file() -> String { "byteproc.log".into() }
@@ -569,8 +569,12 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
         sock.set_sndtimeo(cfg.zmq_send_timeout_ms)?;
         sock.set_linger(cfg.zmq_linger_ms)?;
         if cfg.output_zmq_bind {
+            info!("[{}] Binding PUSH socket to {}", instance_id, 
+                cfg.output_zmq_socket.as_ref().unwrap());
             sock.bind(cfg.output_zmq_socket.as_ref().unwrap())?;
         } else {
+            info!("[{}] Connecting PUSH socket to {}", instance_id,
+                cfg.output_zmq_socket.as_ref().unwrap());
             sock.connect(cfg.output_zmq_socket.as_ref().unwrap())?;
         }
         output_socket = Some(sock);
@@ -633,8 +637,10 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
 
     // Write output
     if cfg.output_type == "stdout" {
+        info!("[{}] Writing output to stdout", instance_id);
         println!("{}", out_hex);
     } else {
+        info!("[{}] Sending output via ZMQ", instance_id);
         output_socket
             .as_ref()
             .unwrap()

@@ -48,10 +48,9 @@ fn test_xor_processing_via_config() {
     assert_eq!(processed_bytes, expected_output_bytes);
 }
 
-// ...existing code...
-
 #[test]
 #[ignore] // This requires actual running processes, so we only run it selectively
+// Run with cargo test test_zmq_passthrough_chain -- --nocapture --ignored
 fn test_zmq_passthrough_chain() {
     use std::fs::{self, File};
     use std::io::Write;

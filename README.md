@@ -140,6 +140,48 @@ echo "cafebabe" | ./target/release/byteproc \
   --output-zmq-bind false
 ```
 
+#### Understanding Bind vs. Connect
+
+The `--input-zmq-bind` and `--output-zmq-bind` flags control how the ZeroMQ socket is initialized:
+
+- **Bind (`true`)**: Socket acts like a "server" - it opens a port and waits for connections
+- **Connect (`false`)**: Socket acts like a "client" - it reaches out to connect to a bound socket
+
+##### When to Use Bind:
+
+1. **Stable Endpoints**: Use bind for stable, long-lived services that other nodes need to find
+2. **Public-Facing Services**: Bind when your service needs to be discoverable by many clients
+3. **Socket Ownership**: The process that creates/owns the address should bind to it
+4. **Central Nodes**: In star topologies, the central node usually binds
+
+##### When to Use Connect:
+
+1. **Ephemeral Processes**: Short-lived processes should connect to stable endpoints
+2. **Multiple Senders**: When multiple processes send to a single receiver
+3. **Dynamic Endpoints**: When the number of endpoints can change at runtime
+4. **Outbound Requests**: When initiating a request to an existing service
+
+##### Common Patterns:
+
+1. **Server-Client**: Server binds, clients connect
+   ```
+   Server: --input-zmq-bind true
+   Client: --output-zmq-bind false
+   ```
+
+2. **Pipeline**: Receivers bind, senders connect
+   ```
+   Receiver: --input-zmq-bind true
+   Sender: --output-zmq-bind false
+   ```
+
+3. **Multi-stage Pipeline**:
+   ```
+   Stage 3: --input-zmq-bind true
+   Stage 2: --input-zmq-bind true --output-zmq-bind false
+   Stage 1: --output-zmq-bind false
+   ```
+
 #### Important Timing Considerations
 
 1. **Start the PULL instance first** - The receiving side must be ready before sending any messages.
@@ -219,6 +261,28 @@ Run all tests:
 ```
 cargo test
 ```
+
+## Debugging tips
+
+To capture all traffic on all interfaces and save it to a pcapng file using tcpdump, use the following command:
+
+Explanation:
+
+sudo: Required for packet capture privileges
+tcpdump: The packet capture utility
+-i any: Tells tcpdump to listen on all interfaces
+-w capture.pcapng: Writes raw packets to the specified file in pcapng format
+For additional useful options:
+
+Add -n to avoid DNS lookups (faster capture)
+Add -s 0 to capture full packets (not just headers)
+Add -B 4096 to increase buffer size for busy networks
+Full example with these options:
+
+`sudo tcpdump -i any -n -s 0 -B 4096 -w capture.pcapng`
+
+Press Ctrl+C to stop the capture when you're done.
+
 
 ---
 
