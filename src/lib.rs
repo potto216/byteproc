@@ -639,13 +639,20 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     if cfg.output_type == "stdout" {
         info!("[{}] Writing output to stdout", instance_id);
         println!("{}", out_hex);
-    } else {
+    } else { // This is the zmq_push case
         info!("[{}] Sending output via ZMQ", instance_id);
-        output_socket
+        let socket = output_socket
             .as_ref()
-            .unwrap()
-            .send(&out_hex, 0)
+            .ok_or_else(|| ByteProcError::InvalidConfiguration("Output socket not initialized for ZMQ PUSH".into()))?;
+        
+        socket.send(&out_hex, 0)
             .map_err(|e| ByteProcError::Zmq(e.to_string()))?;
+        
+        // Add a small delay to allow ZMQ to send the message before the socket is closed/dropped.
+        // This is often necessary for short-lived PUSH clients.
+        // 50-100ms is usually sufficient, but you can make this configurable if needed.
+        std::thread::sleep(std::time::Duration::from_millis(100)); 
+        info!("[{}] ZMQ send initiated and a short delay completed.", instance_id);
     }
 
     info!("[{}] Processing complete", instance_id);
