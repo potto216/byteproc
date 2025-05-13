@@ -97,7 +97,7 @@ Enable XOR processing with a key:
 
 ```
 echo "00112233" | ./target/release/byteproc \
-  --xor-enabled true \
+  --xor-enabled \
   --xor-key abcd1234
 ```
 
@@ -110,7 +110,7 @@ echo "48656c6c6f20776f726c64" | ./target/release/byteproc \
   --log-enabled true \
   --log-level debug \
   --log-file ./logs/byteproc-$(date +%Y%m%d).log \
-  --log-append true
+  --log-append
 ```
 
 **Log levels:** `error`, `warn`, `info`, `debug`, `trace`
@@ -127,8 +127,8 @@ Byteproc operates as a **single-shot processor** when using ZeroMQ - each instan
 ./target/release/byteproc \
   --input-type zmq_pull \
   --input-zmq-socket tcp://*:5555 \
-  --input-zmq-bind true \
-  --zmq-receive-timeout-ms 10000  # Increase timeout to 10 seconds
+  --input-zmq-bind \
+  --zmq-receive-timeout-ms 10000  # timeout to 10 seconds
 ```
 
 ##### Terminal B (Source / PUSH)
@@ -136,16 +136,15 @@ Byteproc operates as a **single-shot processor** when using ZeroMQ - each instan
 # Send a single message
 echo "cafebabe" | ./target/release/byteproc \
   --output-type zmq_push \
-  --output-zmq-socket tcp://localhost:5555 \
-  --output-zmq-bind false
+  --output-zmq-socket tcp://localhost:5555
 ```
 
 #### Understanding Bind vs. Connect
 
 The `--input-zmq-bind` and `--output-zmq-bind` flags control how the ZeroMQ socket is initialized:
 
-- **Bind (`true`)**: Socket acts like a "server" - it opens a port and waits for connections
-- **Connect (`false`)**: Socket acts like a "client" - it reaches out to connect to a bound socket
+- **Bind**: Socket acts like a "server" - it opens a port and waits for connections
+- **Connect (no argument)**: Socket acts like a "client" - it reaches out to connect to a bound socket
 
 ##### When to Use Bind:
 
@@ -165,14 +164,14 @@ The `--input-zmq-bind` and `--output-zmq-bind` flags control how the ZeroMQ sock
 
 1. **Server-Client**: Server binds, clients connect
    ```
-   Server: --input-zmq-bind true
-   Client: --output-zmq-bind false
+   Server: --input-zmq-bind
+   Client: # No --output-zmq-bind
    ```
 
 2. **Pipeline**: Receivers bind, senders connect
    ```
-   Receiver: --input-zmq-bind true
-   Sender: --output-zmq-bind false
+   Receiver: --input-zmq-bind
+   Sender: # No --output-zmq-bind
    ```
 
 3. **Multi-stage Pipeline**:
@@ -212,7 +211,7 @@ while true; do
   ./target/release/byteproc \
     --input-type zmq_pull \
     --input-zmq-socket tcp://*:5555 \
-    --input-zmq-bind true
+    --input-zmq-bind
   echo "Waiting for next message..."
   sleep 0.1  # Small delay between instances
 done
