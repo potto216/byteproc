@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pull.py — receives text messages from a PULL socket.
+pull.py — receives text or binary messages from a PULL socket.
 """
 
 import zmq
@@ -19,15 +19,19 @@ def main():
         default='5555',
         help='TCP port to use (default: 5555)'
     )
+    parser.add_argument(
+        '--binary',
+        action='store_true',
+        help='Receive raw binary and print hex string'
+    )
     args = parser.parse_args()
 
     mode = args.mode
     port = args.port
-    print(f"Mode: {mode}, Port: {port}")
+    binary = args.binary
+    print(f"Mode: {mode}, Port: {port}, Binary: {binary}")
 
     context = zmq.Context()
-
-    # Create a PULL socket and connect to the sender
     socket = context.socket(zmq.PULL)
     if mode == 'connect':
         socket.connect(f"tcp://127.0.0.1:{port}")
@@ -37,8 +41,12 @@ def main():
     print("Waiting to receive messages...")
     try:
         while True:
-            msg = socket.recv_string()
-            print(f"Received: {msg}")
+            if binary:
+                data = socket.recv()               # raw bytes
+                print(f"Received (hex): {data.hex()}")
+            else:
+                msg = socket.recv_string()         # text
+                print(f"Received: {msg}")
     except KeyboardInterrupt:
         print("\nInterrupted by user.")
     finally:

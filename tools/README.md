@@ -67,8 +67,26 @@ echo "cafebabe" | ./target/release/byteproc --output-type zmq_push --output-zmq-
 # You should see output from pull.py
 ```
 
----
+## Testing with GNU Radio
 
+First run the GNU Radio script zmq_push_pull_test.grc
+
+Run 
+```
+python ./tools/pull.py --mode connect --port 5556 --binary
+```
+To wait for the messages from GNU Radio
+
+Now set the execute flag on the push script to interact with gnuradio. This assumes the python path it references what GNU Radio uses
+```
+chmod +x ./tools/push_gnuradio.py
+```
+Now send the messages
+```
+./tools/push_gnuradio.py --mode bind --port 5555
+```
+
+---
 **Tip:** Use `--help` with either script to see all available options:
 
 ```sh
