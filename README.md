@@ -233,23 +233,23 @@ When chaining multiple byteproc instances:
 |------------------------|--------------------------------------------------|
 | `--input-type`         | `"stdin"` or `"zmq_pull"`                        |
 | `--input-zmq-socket`   | ZeroMQ endpoint (e.g., `tcp://*:5555`)           |
-| `--input-zmq-bind`     | `true` (bind) or `false` (connect)               |
+| `--input-zmq-bind`     | (bind) or missing (connect)                      |
 | `--output-type`        | `"stdout"` or `"zmq_push"`                       |
 | `--output-zmq-socket`  | ZeroMQ endpoint (e.g., `tcp://localhost:5555`)   |
-| `--output-zmq-bind`    | `true` (bind) or `false` (connect)               |
+| `--output-zmq-bind`    | (bind) or missing (connect)                      |
 | `--log-enabled`        | Enable or disable logging                        |
 | `--log-level`          | Log verbosity: `error`, `warn`, `info`, etc.     |
 | `--log-file`           | Log file path                                    |
-| `--log-append`         | Append to log file (`true`) or overwrite (`false`)|
+| `--log-append`         | Append to log file or overwrite                  |
 | `--xor-enabled`        | Enable XOR processing                            |
 | `--xor-key`            | Hexadecimal XOR key                              |
 | `--xor-pad`            | Optional 1-byte hex pad                          |
 | `--base64-enabled`     | Enable Base64 processing                         |
 | `--base64-mode`        | `"encode"` or `"decode"`                         |
-| `--base64-padding`     | Include (`true`) or omit (`false`) padding       |
+| `--base64-padding`     | (bind) or missing (connect)                      |
 | `--config`             | Path to JSON config file                         |
 
-See `./target/release/byteproc --help` for the full list.
+See `byteproc --help` for the full list.
 
 ---
 
@@ -265,25 +265,18 @@ cargo test
 
 To capture all traffic on all interfaces and save it to a pcapng file using tcpdump, use the following command:
 
-Explanation:
-
-sudo: Required for packet capture privileges
-tcpdump: The packet capture utility
--i any: Tells tcpdump to listen on all interfaces
--w capture.pcapng: Writes raw packets to the specified file in pcapng format
-For additional useful options:
-
-Add -n to avoid DNS lookups (faster capture)
-Add -s 0 to capture full packets (not just headers)
-Add -B 4096 to increase buffer size for busy networks
-Full example with these options:
-
 `sudo tcpdump -i any -n -s 0 -B 4096 -w capture.pcapng`
 
 Press Ctrl+C to stop the capture when you're done.
 
+Explanation:
 
----
+tcpdump: The packet capture utility
+-i any: Tells tcpdump to listen on all interfaces
+-w capture.pcapng: Writes raw packets to the specified file in pcapng format
+-n to avoid DNS lookups (faster capture)
+-s 0 to capture full packets (not just headers)
+-B 4096 to increase buffer size for busy networks
 
 ## License
 See [LICENSE.txt](LICENSE.txt) for details.

@@ -84,7 +84,7 @@ echo "Starting final receiver..."
 ./target/debug/byteproc \
   --input-type zmq_pull \
   --input-zmq-socket "tcp://*:$PORT2" \
-  --input-zmq-bind true \
+  --input-zmq-bind \
   --log-file "$LOG_DIR/receiver.log" \
   --zmq-receive-timeout-ms 5000 \
   > "$LOG_DIR/output.txt" &
@@ -95,7 +95,7 @@ echo "Starting middle processor..."
 ./target/debug/byteproc \
   --input-type zmq_pull \
   --input-zmq-socket "tcp://*:$PORT1" \
-  --input-zmq-bind true \
+  --input-zmq-bind \
   --output-type zmq_push \
   --output-zmq-socket "tcp://localhost:$PORT2" \
   --output-zmq-bind false \
@@ -108,7 +108,6 @@ echo "Sending test data..."
 echo "$TEST_DATA" | ./target/debug/byteproc \
   --output-type zmq_push \
   --output-zmq-socket "tcp://localhost:$PORT1" \
-  --output-zmq-bind false \
   --log-file "$LOG_DIR/sender.log"
 
 # Wait for processing to complete
@@ -130,8 +129,15 @@ fi
 "#;
 
     // Write script to temp directory and make executable
-    let mut file = File::create(&script_path).expect("Failed to create script file");
-    file.write_all(script_content.as_bytes()).expect("Failed to write script content");
+//    let mut file = File::create(&script_path).expect("Failed to create script file");
+//    file.write_all(script_content.as_bytes()).expect("Failed to write script content");
+    {
+        let mut file = File::create(&script_path)
+            .expect("Failed to create script file");
+        file.write_all(script_content.as_bytes())
+            .expect("Failed to write script content");
+        // file is dropped (closed) here, at the end of this block
+    }    
     
     // Make the script executable
     #[cfg(unix)]

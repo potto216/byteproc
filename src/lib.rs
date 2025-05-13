@@ -292,6 +292,7 @@ impl Config {
             .ok_or_else(|| ByteProcError::InvalidConfiguration("max_stream_size_kb too large".into()))
     }
     
+    // TODO: get rid of string
     /// Calculated field: Base64 encode mode
     pub fn base64_encode(&self) -> bool {
         self.base64_mode == "encode"
@@ -471,6 +472,7 @@ pub struct ModuleRegistry {
     modules: HashMap<&'static str, Box<dyn ByteProcessor>>,
 }
 
+// TODO: get rid of strings
 impl ModuleRegistry {
     pub fn new(cfg: &Config) -> Result<Self, ByteProcError> {
         let mut modules: HashMap<&'static str, Box<dyn ByteProcessor>> = HashMap::new();
@@ -532,7 +534,7 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
             .add_filter_ignore_str("mio")  // Ignore noisy libraries
             .set_time_to_local(true)
             .build();
-        
+        // TODO: replace unwrap with error handling 
         WriteLogger::init(level, log_cfg, file).unwrap();
         
         // Log the start of this instance
@@ -544,12 +546,14 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     let mut input_socket: Option<Socket> = None;
     let mut output_socket: Option<Socket> = None;
 
+    // TODO: get rid of string
     if cfg.input_type == "zmq_pull" {
         let sock = context.socket(zmq::PULL)?;
         sock.set_reconnect_ivl(cfg.zmq_reconnect_interval_ms as i32)?;
         sock.set_reconnect_ivl_max(cfg.zmq_max_reconnect_attempts as i32)?;
         sock.set_rcvtimeo(cfg.zmq_receive_timeout_ms)?;
         sock.set_linger(cfg.zmq_linger_ms)?;
+        // TODO: replace unwrap with error handling 
         if cfg.input_zmq_bind {
             info!("[{}] Binding PULL socket to {}", instance_id, 
                 cfg.input_zmq_socket.as_ref().unwrap());
@@ -561,13 +565,14 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
         }
         input_socket = Some(sock);
     }
-
+    // TODO: get rid of string
     if cfg.output_type == "zmq_push" {
         let sock = context.socket(zmq::PUSH)?;
         sock.set_reconnect_ivl(cfg.zmq_reconnect_interval_ms as i32)?;
         sock.set_reconnect_ivl_max(cfg.zmq_max_reconnect_attempts as i32)?;
         sock.set_sndtimeo(cfg.zmq_send_timeout_ms)?;
         sock.set_linger(cfg.zmq_linger_ms)?;
+        // TODO: replace unwrap with error handling 
         if cfg.output_zmq_bind {
             info!("[{}] Binding PUSH socket to {}", instance_id, 
                 cfg.output_zmq_socket.as_ref().unwrap());
@@ -581,6 +586,7 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     }
 
     // Read input
+    // TODO: get rid of string
     let raw_hex = if cfg.input_type == "stdin" {
         let mut s = String::new();
         info!("[{}] Reading from stdin...", instance_id);
@@ -649,8 +655,8 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
             .map_err(|e| ByteProcError::Zmq(e.to_string()))?;
         
         // Add a small delay to allow ZMQ to send the message before the socket is closed/dropped.
-        // This is often necessary for short-lived PUSH clients.
-        // 50-100ms is usually sufficient, but you can make this configurable if needed.
+        // This is a MUST until a better solution is found, otherwise the packet is never sent. 100 msec always has worked.
+        // TODO: find a better solution that is platform independent 
         std::thread::sleep(std::time::Duration::from_millis(100)); 
         info!("[{}] ZMQ send initiated and a short delay completed.", instance_id);
     }
