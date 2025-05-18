@@ -20,6 +20,118 @@ use zeroize::Zeroize;
 use zmq::{Context, Socket};
 use std::sync::OnceLock;
 
+// -------------- Enums and Constants --------------
+
+/// Input types
+#[derive(Parser, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum InputType {
+    Stdin,
+    ZmqPull,
+}
+
+impl Default for InputType {
+    fn default() -> Self {
+        InputType::Stdin
+    }
+}
+
+impl std::fmt::Display for InputType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InputType::Stdin => write!(f, "stdin"),
+            InputType::ZmqPull => write!(f, "zmq_pull"),
+        }
+    }
+}
+
+impl FromStr for InputType {
+    type Err = ByteProcError;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "stdin" => Ok(InputType::Stdin),
+            "zmq_pull" => Ok(InputType::ZmqPull),
+            _ => Err(ByteProcError::InvalidConfiguration(format!("Invalid input type: {}", s))),
+        }
+    }
+}
+
+/// Output types
+#[derive(Parser, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum OutputType {
+    Stdout,
+    ZmqPush,
+}
+
+impl Default for OutputType {
+    fn default() -> Self {
+        OutputType::Stdout
+    }
+}
+
+impl std::fmt::Display for OutputType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputType::Stdout => write!(f, "stdout"),
+            OutputType::ZmqPush => write!(f, "zmq_push"),
+        }
+    }
+}
+
+impl FromStr for OutputType {
+    type Err = ByteProcError;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "stdout" => Ok(OutputType::Stdout),
+            "zmq_push" => Ok(OutputType::ZmqPush),
+            _ => Err(ByteProcError::InvalidConfiguration(format!("Invalid output type: {}", s))),
+        }
+    }
+}
+
+/// Base64 modes
+#[derive(Parser, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Base64Mode {
+    Encode,
+    Decode,
+}
+
+impl Default for Base64Mode {
+    fn default() -> Self {
+        Base64Mode::Encode
+    }
+}
+
+impl std::fmt::Display for Base64Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Base64Mode::Encode => write!(f, "encode"),
+            Base64Mode::Decode => write!(f, "decode"),
+        }
+    }
+}
+
+impl FromStr for Base64Mode {
+    type Err = ByteProcError;
+    
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "encode" => Ok(Base64Mode::Encode),
+            "decode" => Ok(Base64Mode::Decode),
+            _ => Err(ByteProcError::InvalidConfiguration(format!("Invalid base64 mode: {}", s))),
+        }
+    }
+}
+
+// Module name constants
+pub const MODULE_PASSTHROUGH: &str = "passthrough";
+pub const MODULE_XOR: &str = "xor";
+pub const MODULE_BASE64: &str = "base64";
+
 // -------------- Error type --------------
 
 #[derive(Debug)]
@@ -61,7 +173,7 @@ pub trait ByteProcessor {
 /// Passthrough
 pub struct Passthrough;
 impl ByteProcessor for Passthrough {
-    fn name(&self) -> &'static str { "passthrough" }
+    fn name(&self) -> &'static str { MODULE_PASSTHROUGH }
     fn process(&self, input: &[u8]) -> Result<Vec<u8>, ByteProcError> {
         Ok(input.to_vec())
     }
@@ -89,7 +201,7 @@ impl XorModule {
     }
 }
 impl ByteProcessor for XorModule {
-    fn name(&self) -> &'static str { "xor" }
+    fn name(&self) -> &'static str { MODULE_XOR }
     fn process(&self, input: &[u8]) -> Result<Vec<u8>, ByteProcError> {
         let mut out = Vec::with_capacity(input.len());
         let key = &self.key.key;
@@ -112,7 +224,7 @@ impl Base64Module {
     }
 }
 impl ByteProcessor for Base64Module {
-    fn name(&self) -> &'static str { "base64" }
+    fn name(&self) -> &'static str { MODULE_BASE64 }
     fn process(&self, input: &[u8]) -> Result<Vec<u8>, ByteProcError> {
         if self.encode {
             let cfg = if self.padding {
@@ -149,8 +261,8 @@ pub struct Config {
 
     // Input/Output options
     #[arg(long, default_value = "stdin")]
-    #[serde(default = "default_input_type")]
-    pub input_type: String,
+    #[serde(default)]
+    pub input_type: InputType,
 
     #[arg(long)]
     #[serde(default)]
@@ -161,8 +273,8 @@ pub struct Config {
     pub input_zmq_bind: bool,
 
     #[arg(long, default_value = "stdout")]
-    #[serde(default = "default_output_type")]
-    pub output_type: String,
+    #[serde(default)]
+    pub output_type: OutputType,
 
     #[arg(long)]
     #[serde(default)]
@@ -229,7 +341,7 @@ pub struct Config {
 
     #[arg(long, default_value = "encode")]
     #[serde(default = "default_base64_mode")]
-    pub base64_mode: String,
+    pub base64_mode: Base64Mode,
 
     #[arg(long, default_value_t = true)]
     #[serde(default = "default_base64_padding")]
@@ -238,8 +350,8 @@ pub struct Config {
 
 // Default function implementations
 fn default_max_stream_size_kb() -> usize { 64 }
-fn default_input_type() -> String { "stdin".into() }
-fn default_output_type() -> String { "stdout".into() }
+fn default_input_type() -> InputType { InputType::Stdin }
+fn default_output_type() -> OutputType { OutputType::Stdout }
 fn default_zmq_reconnect_interval_ms() -> u32 { 1000 }
 fn default_zmq_max_reconnect_attempts() -> u32 { 5 }
 fn default_zmq_send_timeout_ms() -> i32 { 5000 }
@@ -250,7 +362,7 @@ fn default_log_level() -> String { "info".into() }
 fn default_log_file() -> String { "byteproc.log".into() }
 fn default_log_append() -> bool { true }
 fn default_xor_pad() -> String { "00".into() }
-fn default_base64_mode() -> String { "encode".into() }
+fn default_base64_mode() -> Base64Mode { Base64Mode::Encode }
 fn default_base64_padding() -> bool { true }
 
 // Implement the Default trait for Config
@@ -292,10 +404,9 @@ impl Config {
             .ok_or_else(|| ByteProcError::InvalidConfiguration("max_stream_size_kb too large".into()))
     }
     
-    // TODO: get rid of string
     /// Calculated field: Base64 encode mode
     pub fn base64_encode(&self) -> bool {
-        self.base64_mode == "encode"
+        self.base64_mode == Base64Mode::Encode
     }
     
     /// Calculated field: XOR pad byte
@@ -427,13 +538,13 @@ impl Config {
     /// Validate the configuration
     fn validate(&self) -> Result<(), ByteProcError> {
         // Check required fields for specific input/output types
-        if self.input_type == "zmq_pull" && self.input_zmq_socket.is_none() {
+        if self.input_type == InputType::ZmqPull && self.input_zmq_socket.is_none() {
             return Err(ByteProcError::InvalidConfiguration(
                 "input_zmq_socket must be set for zmq_pull".into(),
             ));
         }
         
-        if self.output_type == "zmq_push" && self.output_zmq_socket.is_none() {
+        if self.output_type == OutputType::ZmqPush && self.output_zmq_socket.is_none() {
             return Err(ByteProcError::InvalidConfiguration(
                 "output_zmq_socket must be set for zmq_push".into(),
             ));
@@ -477,7 +588,7 @@ impl ModuleRegistry {
     pub fn new(cfg: &Config) -> Result<Self, ByteProcError> {
         let mut modules: HashMap<&'static str, Box<dyn ByteProcessor>> = HashMap::new();
         // Passthrough always present
-        modules.insert("passthrough", Box::new(Passthrough));
+        modules.insert(MODULE_PASSTHROUGH, Box::new(Passthrough));
 
         // XOR
         if cfg.xor_enabled {
@@ -485,13 +596,13 @@ impl ModuleRegistry {
                 cfg.xor_key.as_ref().unwrap(),
                 cfg.xor_pad_byte(),
             )?;
-            modules.insert("xor", Box::new(m));
+            modules.insert(MODULE_XOR, Box::new(m));
         }
 
         // Base64
         if cfg.base64_enabled {
             let m = Base64Module::new(cfg.base64_encode(), cfg.base64_padding);
-            modules.insert("base64", Box::new(m));
+            modules.insert(MODULE_BASE64, Box::new(m));
         }
 
         Ok(ModuleRegistry { modules })
@@ -546,80 +657,91 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     let mut input_socket: Option<Socket> = None;
     let mut output_socket: Option<Socket> = None;
 
-    // TODO: get rid of string
-    if cfg.input_type == "zmq_pull" {
-        let sock = context.socket(zmq::PULL)?;
-        sock.set_reconnect_ivl(cfg.zmq_reconnect_interval_ms as i32)?;
-        sock.set_reconnect_ivl_max(cfg.zmq_max_reconnect_attempts as i32)?;
-        sock.set_rcvtimeo(cfg.zmq_receive_timeout_ms)?;
-        sock.set_linger(cfg.zmq_linger_ms)?;
-        // TODO: replace unwrap with error handling 
-        if cfg.input_zmq_bind {
-            info!("[{}] Binding PULL socket to {}", instance_id, 
-                cfg.input_zmq_socket.as_ref().unwrap());
-            sock.bind(cfg.input_zmq_socket.as_ref().unwrap())?;
-        } else {
-            info!("[{}] Connecting PULL socket to {}", instance_id,
-                cfg.input_zmq_socket.as_ref().unwrap());
-            sock.connect(cfg.input_zmq_socket.as_ref().unwrap())?;
+    match cfg.input_type {
+        InputType::ZmqPull => {
+            let sock = context.socket(zmq::PULL)?;
+            sock.set_reconnect_ivl(cfg.zmq_reconnect_interval_ms as i32)?;
+            sock.set_reconnect_ivl_max(cfg.zmq_max_reconnect_attempts as i32)?;
+            sock.set_rcvtimeo(cfg.zmq_receive_timeout_ms)?;
+            sock.set_linger(cfg.zmq_linger_ms)?;
+            
+            if cfg.input_zmq_bind {
+                info!("[{}] Binding PULL socket to {}", instance_id, 
+                    cfg.input_zmq_socket.as_ref().unwrap());
+                sock.bind(cfg.input_zmq_socket.as_ref().unwrap())?;
+            } else {
+                info!("[{}] Connecting PULL socket to {}", instance_id,
+                    cfg.input_zmq_socket.as_ref().unwrap());
+                sock.connect(cfg.input_zmq_socket.as_ref().unwrap())?;
+            }
+            input_socket = Some(sock);
+        },
+        InputType::Stdin => {
+            // No socket setup needed for stdin
         }
-        input_socket = Some(sock);
     }
-    // TODO: get rid of string
-    if cfg.output_type == "zmq_push" {
-        let sock = context.socket(zmq::PUSH)?;
-        sock.set_reconnect_ivl(cfg.zmq_reconnect_interval_ms as i32)?;
-        sock.set_reconnect_ivl_max(cfg.zmq_max_reconnect_attempts as i32)?;
-        sock.set_sndtimeo(cfg.zmq_send_timeout_ms)?;
-        sock.set_linger(cfg.zmq_linger_ms)?;
-        // TODO: replace unwrap with error handling 
-        if cfg.output_zmq_bind {
-            info!("[{}] Binding PUSH socket to {}", instance_id, 
-                cfg.output_zmq_socket.as_ref().unwrap());
-            sock.bind(cfg.output_zmq_socket.as_ref().unwrap())?;
-        } else {
-            info!("[{}] Connecting PUSH socket to {}", instance_id,
-                cfg.output_zmq_socket.as_ref().unwrap());
-            sock.connect(cfg.output_zmq_socket.as_ref().unwrap())?;
+    
+    match cfg.output_type {
+        OutputType::ZmqPush => {
+            let sock = context.socket(zmq::PUSH)?;
+            sock.set_reconnect_ivl(cfg.zmq_reconnect_interval_ms as i32)?;
+            sock.set_reconnect_ivl_max(cfg.zmq_max_reconnect_attempts as i32)?;
+            sock.set_sndtimeo(cfg.zmq_send_timeout_ms)?;
+            sock.set_linger(cfg.zmq_linger_ms)?;
+            
+            if cfg.output_zmq_bind {
+                info!("[{}] Binding PUSH socket to {}", instance_id, 
+                    cfg.output_zmq_socket.as_ref().unwrap());
+                sock.bind(cfg.output_zmq_socket.as_ref().unwrap())?;
+            } else {
+                info!("[{}] Connecting PUSH socket to {}", instance_id,
+                    cfg.output_zmq_socket.as_ref().unwrap());
+                sock.connect(cfg.output_zmq_socket.as_ref().unwrap())?;
+            }
+            output_socket = Some(sock);
+        },
+        OutputType::Stdout => {
+            // No socket setup needed for stdout
         }
-        output_socket = Some(sock);
     }
 
     // Read input
-    // TODO: get rid of string
-    let raw_hex = if cfg.input_type == "stdin" {
-        let mut s = String::new();
-        info!("[{}] Reading from stdin...", instance_id);
-        io::stdin().read_to_string(&mut s)
-            .map_err(|e| ByteProcError::Io(e.to_string()))?;
-        info!("[{}] Finished reading from stdin ({} chars)", instance_id, s.trim().len());
-        s.trim().to_string()
-    } else {
-        // This is the zmq_pull case
-        let socket_ref = input_socket
-            .as_ref()
-            .ok_or_else(|| ByteProcError::InvalidConfiguration("Input socket not initialized for ZMQ".into()))?;
+    let raw_hex = match cfg.input_type {
+        InputType::Stdin => {
+            let mut s = String::new();
+            info!("[{}] Reading from stdin...", instance_id);
+            io::stdin().read_to_string(&mut s)
+                .map_err(|e| ByteProcError::Io(e.to_string()))?;
+            info!("[{}] Finished reading from stdin ({} chars)", instance_id, s.trim().len());
+            s.trim().to_string()
+        },
+        InputType::ZmqPull => {
+            // This is the zmq_pull case
+            let socket_ref = input_socket
+                .as_ref()
+                .ok_or_else(|| ByteProcError::InvalidConfiguration("Input socket not initialized for ZMQ".into()))?;
 
-        info!(
-            "[{}] Waiting for ZMQ message on PULL socket (timeout: {}ms)...",
-            instance_id, cfg.zmq_receive_timeout_ms
-        );
-        let msg = socket_ref
-            .recv_msg(0)
-            .map_err(|e| {
-                error!("[{}] ZMQ recv_msg error: {}", instance_id, e);
-                ByteProcError::Zmq(e.to_string())
-            })?;
-        info!("[{}] Received ZMQ message ({} bytes)", instance_id, msg.len());
+            info!(
+                "[{}] Waiting for ZMQ message on PULL socket (timeout: {}ms)...",
+                instance_id, cfg.zmq_receive_timeout_ms
+            );
+            let msg = socket_ref
+                .recv_msg(0)
+                .map_err(|e| {
+                    error!("[{}] ZMQ recv_msg error: {}", instance_id, e);
+                    ByteProcError::Zmq(e.to_string())
+                })?;
+            info!("[{}] Received ZMQ message ({} bytes)", instance_id, msg.len());
 
-        let s = msg.as_str()
-            .ok_or_else(|| {
-                error!("[{}] Failed to convert ZMQ message to UTF-8 string", instance_id);
-                ByteProcError::HexDecode("Invalid UTF-8 from ZMQ".into())
-            })?;
-        info!("[{}] Successfully converted ZMQ message to string ({} chars)", 
-            instance_id, s.trim().len());
-        s.trim().to_string()
+            let s = msg.as_str()
+                .ok_or_else(|| {
+                    error!("[{}] Failed to convert ZMQ message to UTF-8 string", instance_id);
+                    ByteProcError::HexDecode("Invalid UTF-8 from ZMQ".into())
+                })?;
+            info!("[{}] Successfully converted ZMQ message to string ({} chars)", 
+                instance_id, s.trim().len());
+            s.trim().to_string()
+        }
     };
     info!("[{}] Received hex input (len={} chars)", instance_id, raw_hex.len());
 
@@ -642,23 +764,26 @@ pub(crate) fn main_internal(cfg: Config) -> Result<(), Box<dyn Error>> {
     let out_hex = hex::encode(&processed);
 
     // Write output
-    if cfg.output_type == "stdout" {
-        info!("[{}] Writing output to stdout", instance_id);
-        println!("{}", out_hex);
-    } else { // This is the zmq_push case
-        info!("[{}] Sending output via ZMQ", instance_id);
-        let socket = output_socket
-            .as_ref()
-            .ok_or_else(|| ByteProcError::InvalidConfiguration("Output socket not initialized for ZMQ PUSH".into()))?;
-        
-        socket.send(&out_hex, 0)
-            .map_err(|e| ByteProcError::Zmq(e.to_string()))?;
-        
-        // Add a small delay to allow ZMQ to send the message before the socket is closed/dropped.
-        // This is a MUST until a better solution is found, otherwise the packet is never sent. 100 msec always has worked.
-        // TODO: find a better solution that is platform independent 
-        std::thread::sleep(std::time::Duration::from_millis(100)); 
-        info!("[{}] ZMQ send initiated and a short delay completed.", instance_id);
+    match cfg.output_type {
+        OutputType::Stdout => {
+            info!("[{}] Writing output to stdout", instance_id);
+            println!("{}", out_hex);
+        },
+        OutputType::ZmqPush => {
+            info!("[{}] Sending output via ZMQ", instance_id);
+            let socket = output_socket
+                .as_ref()
+                .ok_or_else(|| ByteProcError::InvalidConfiguration("Output socket not initialized for ZMQ PUSH".into()))?;
+            
+            socket.send(&out_hex, 0)
+                .map_err(|e| ByteProcError::Zmq(e.to_string()))?;
+            
+            // Add a small delay to allow ZMQ to send the message before the socket is closed/dropped.
+            // This is a MUST until a better solution is found, otherwise the packet is never sent. 100 msec always has worked.
+            // TODO: find a better solution that is platform independent 
+            std::thread::sleep(std::time::Duration::from_millis(100)); 
+            info!("[{}] ZMQ send initiated and a short delay completed.", instance_id);
+        }
     }
 
     info!("[{}] Processing complete", instance_id);
