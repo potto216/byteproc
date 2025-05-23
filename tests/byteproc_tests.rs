@@ -2,8 +2,12 @@ use byteproc::processor::{Passthrough, ByteProcessor};
 use byteproc::processor::{Config, ModuleRegistry}; // Removed ByteProcError as it's unused
 use clap::Parser; // Import the Parser trait
 use hex;
-// tempfile is used in the ignored test, ensure it's in Cargo.toml [dev-dependencies]
-use tempfile;
+use std::str::FromStr;
+use byteproc::processor::{
+    InputType, OutputType, Base64Mode, Base64Module, XorModule,
+    ByteProcError,
+};
+
 
 #[test]
 fn test_passthrough() {
@@ -48,128 +52,171 @@ fn test_xor_processing_via_config() {
     assert_eq!(processed_bytes, expected_output_bytes);
 }
 
+// this is a long test so only run when specified 
 #[test]
-#[ignore] // This requires actual running processes, so we only run it selectively
-// Run with cargo test test_zmq_passthrough_chain -- --nocapture --ignored
-fn test_zmq_passthrough_chain() {
-    use std::fs::{self, File};
-    use std::io::Write;
-    use std::path::PathBuf;
-    use std::process::Command;
-    
-    // Create test directory for artifacts
-    let test_dir = tempfile::tempdir().expect("Failed to create temp directory");
-    let test_path = test_dir.path();
-    let script_path = test_path.join("zmq_test.sh");
-    
-    // Create test script
-    let script_content = r#"#!/bin/bash
-set -e
-
-# Set up log files
-LOG_DIR="$(pwd)/zmq_test_logs"
-mkdir -p "$LOG_DIR"
-
-# Test parameters
-TEST_DATA="deadbeefcafebabe"
-PORT1="5551"
-PORT2="5552"
-
-# Clean up prior test processes if any
-pkill -f "byteproc.*zmq" || true
-sleep 1
-
-# Start the chain from the end
-echo "Starting final receiver..."
-./target/debug/byteproc \
-  --input-type zmq_pull \
-  --input-zmq-socket "tcp://*:$PORT2" \
-  --input-zmq-bind \
-  --log-file "$LOG_DIR/receiver.log" \
-  --zmq-receive-timeout-ms 5000 \
-  > "$LOG_DIR/output.txt" &
-RECEIVER_PID=$!
-sleep 1
-
-echo "Starting middle processor..."
-./target/debug/byteproc \
-  --input-type zmq_pull \
-  --input-zmq-socket "tcp://*:$PORT1" \
-  --input-zmq-bind \
-  --output-type zmq_push \
-  --output-zmq-socket "tcp://localhost:$PORT2" \
-  --output-zmq-bind false \
-  --log-file "$LOG_DIR/middle.log" \
-  --zmq-receive-timeout-ms 5000 &
-MIDDLE_PID=$!
-sleep 1
-
-echo "Sending test data..."
-echo "$TEST_DATA" | ./target/debug/byteproc \
-  --output-type zmq_push \
-  --output-zmq-socket "tcp://localhost:$PORT1" \
-  --log-file "$LOG_DIR/sender.log"
-
-# Wait for processing to complete
-wait $RECEIVER_PID || true
-wait $MIDDLE_PID || true
-
-# Check the result
-RESULT=$(cat "$LOG_DIR/output.txt")
-if [ "$RESULT" = "$TEST_DATA" ]; then
-  echo "TEST PASSED: Input matches output"
-  echo "[$TEST_DATA] == [$RESULT]"
-  exit 0
-else
-  echo "TEST FAILED: Input does not match output"
-  echo "Expected: [$TEST_DATA]"
-  echo "Got:      [$RESULT]"
-  exit 1
-fi
-"#;
-
-    // Write script to temp directory and make executable
-//    let mut file = File::create(&script_path).expect("Failed to create script file");
-//    file.write_all(script_content.as_bytes()).expect("Failed to write script content");
-    {
-        let mut file = File::create(&script_path)
-            .expect("Failed to create script file");
-        file.write_all(script_content.as_bytes())
-            .expect("Failed to write script content");
-        // file is dropped (closed) here, at the end of this block
-    }    
-    
-    // Make the script executable
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&script_path).expect("Failed to get metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script_path, perms).expect("Failed to set permissions");
-    }
-    
-    // Build the debug binary first
-    Command::new("cargo")
-        .args(["build"])
+#[ignore]
+fn test_integration_3_blocks_via_bash_script() {
+    let script_name = "tests/test_integration_3_blocks.bash";
+    let status = std::process::Command::new("bash")
+        .arg(script_name)
         .status()
-        .expect("Failed to build debug binary");
-    
-    // Run the test script
-    let output = Command::new(&script_path)
-        .current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")))
-        .output()
-        .expect("Failed to execute test script");
-    
-    // Check if the test passed
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    
-    println!("Test script stdout:\n{}", stdout);
-    println!("Test script stderr:\n{}", stderr);
+        .expect(&format!("Failed to execute test script: {}", script_name));
     
     assert!(
-        stdout.contains("TEST PASSED"),
-        "ZMQ chain test failed. stdout: {}, stderr: {}",
-        stdout, stderr
+        status.success(), 
+        "System test script failed: {} (exit code: {})",
+        script_name,
+        status.code().unwrap_or(-1)
     );
+
+}
+
+#[test]
+fn test_input_type_from_str_valid() {
+    assert_eq!(InputType::from_str("stdin").unwrap(), InputType::Stdin);
+    assert_eq!(InputType::from_str("zmq_pull").unwrap(), InputType::ZmqPull);
+    // case‐insensitive
+    assert_eq!(InputType::from_str("STDIN").unwrap(), InputType::Stdin);
+}
+
+#[test]
+fn test_input_type_from_str_invalid() {
+    assert!(InputType::from_str("unknown").is_err());
+}
+
+#[test]
+fn test_output_type_from_str_and_display() {
+    assert_eq!(OutputType::from_str("stdout").unwrap(), OutputType::Stdout);
+    assert_eq!(OutputType::from_str("zmq_push").unwrap(), OutputType::ZmqPush);
+    assert_eq!(format!("{}", OutputType::Stdout), "stdout");
+    assert_eq!(format!("{}", OutputType::ZmqPush), "zmq_push");
+    assert!(OutputType::from_str("invalid").is_err());
+}
+
+#[test]
+fn test_config_max_stream_size_overflow() {
+    let mut cfg = Config::default();
+    cfg.max_stream_size_kb = usize::MAX;
+    let err = cfg.max_stream_size().unwrap_err();
+    // should be an InvalidConfiguration error
+    assert!(matches!(err, ByteProcError::InvalidConfiguration(_)));
+    assert!(err.to_string().contains("max_stream_size_kb too large"));
+}
+
+#[test]
+fn test_config_base64_encode_flag() {
+    let mut cfg = Config::default();
+    cfg.base64_mode = Base64Mode::Decode;
+    assert!(!cfg.base64_encode());
+    cfg.base64_mode = Base64Mode::Encode;
+    assert!(cfg.base64_encode());
+}
+
+#[test]
+fn test_config_xor_pad_byte_parsing() {
+    let mut cfg = Config::default();
+    // default_xor_pad is "00"
+    assert_eq!(cfg.xor_pad_byte(), Some(0));
+    cfg.xor_pad = "ff".into();
+    assert_eq!(cfg.xor_pad_byte(), Some(0xff));
+    // invalid hex
+    cfg.xor_pad = "GG".into();
+    assert_eq!(cfg.xor_pad_byte(), None);
+}
+
+#[test]
+fn test_config_validate_conditions() {
+    let mut cfg = Config::default();
+    // missing ZMQ pull socket
+    cfg.input_type = InputType::ZmqPull;
+    assert!(matches!(cfg.validate(), Err(ByteProcError::InvalidConfiguration(_))));
+    // missing ZMQ push socket
+    let mut cfg = Config::default();
+    cfg.output_type = OutputType::ZmqPush;
+    assert!(cfg.validate().is_err());
+    // missing XOR key
+    let mut cfg = Config::default();
+    cfg.xor_enabled = true;
+    assert!(cfg.validate().is_err());
+
+    // default config is valid
+    let cfg = Config::default();
+    assert!(cfg.validate().is_ok());
+}
+
+#[test]
+fn test_xor_module_new_empty_key() {
+    let err = XorModule::new("", None).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Invalid configuration: xor_key cannot be empty"
+    );
+}
+
+#[test]
+fn test_xor_module_process_only() {
+    // set up a single‐byte key of 0xff
+    let module = XorModule::new("ff", Some(0)).unwrap();
+    // XOR each byte against 0xff
+    let data = vec![0x00, 0x0f, 0xff];
+    let out = module.process(&data).unwrap();
+    assert_eq!(out, vec![0xff, 0xf0, 0x00]);
+}
+
+#[test]
+fn test_base64_module_roundtrip_and_error() {
+    let plaintext = b"hello world";
+    // encode with padding
+    let enc = Base64Module::new(true, true).process(plaintext).unwrap();
+    assert_eq!(enc, b"aGVsbG8gd29ybGQ=".to_vec());
+
+    // decode back
+    let dec = Base64Module::new(false, true).process(&enc).unwrap();
+    assert_eq!(&dec, plaintext);
+
+    // decode invalid input → Module error
+    let err = Base64Module::new(false, true)
+        .process(b"!!! not base64 !!!")
+        .unwrap_err();
+    assert!(matches!(err, ByteProcError::Module(_)));
+}
+
+#[test]
+fn test_module_registry_only_xor() {
+    let mut cfg = Config::default();
+    cfg.xor_enabled = true;
+    cfg.xor_key = Some("0f".into());
+    let registry = ModuleRegistry::new(&cfg).unwrap();
+
+    // XOR with 0x0f: [1,2,3] → [0e,0d,0c]
+    let out = registry.process_all(vec![1, 2, 3]).unwrap();
+    assert_eq!(out, vec![0x0e, 0x0d, 0x0c]);
+}
+
+#[test]
+fn test_module_registry_only_base64() {
+    let mut cfg = Config::default();
+    cfg.base64_enabled = true;
+    cfg.base64_mode = Base64Mode::Encode;
+    cfg.base64_padding = false;
+    let registry = ModuleRegistry::new(&cfg).unwrap();
+
+    let out = registry.process_all(b"foo".to_vec()).unwrap();
+    // "foo" → "Zm9v" (no padding)
+    assert_eq!(out, b"Zm9v".to_vec());
+}
+
+#[test]
+fn test_module_registry_xor_then_base64() {
+    let mut cfg = Config::default();
+    cfg.xor_enabled = true;
+    cfg.xor_key = Some("ff".into());
+    cfg.base64_enabled = true;
+    cfg.base64_mode = Base64Mode::Encode;
+    cfg.base64_padding = false;
+    let registry = ModuleRegistry::new(&cfg).unwrap();
+
+    // byte 0xff → XOR → 0x00 → base64 no‐pad → "AA"
+    let out = registry.process_all(vec![0xff]).unwrap();
+    assert_eq!(out, b"AA".to_vec());
 }

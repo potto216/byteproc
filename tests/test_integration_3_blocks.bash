@@ -1,8 +1,13 @@
 #!/bin/bash
 set -e
 
+# Allow override of the byteproc executable path via environment variable
+# Default to debug build if not specified
+BYTEPROC_BIN="${BYTEPROC_BIN:-./target/debug/byteproc}"
+echo "Using byteproc binary: $BYTEPROC_BIN"
+
 # Set up log files
-LOG_DIR="$(pwd)/zmq_test_logs"
+LOG_DIR="$(pwd)/tests/zmq_test_logs"
 mkdir -p "$LOG_DIR"
 
 # Test parameters
@@ -13,10 +18,17 @@ PORT2="5552"
 # Clean up prior test processes if any
 pkill -f "byteproc.*zmq" || true
 sleep 1
+echo "running from $(pwd)"
+echo "Cleaning up old logs..."
+rm -f "$LOG_DIR"/*.log
+rm -f "$LOG_DIR"/*.txt
+echo "Starting test with data: $TEST_DATA"
+echo "Ports: $PORT1 -> $PORT2"
+echo "Log directory: $LOG_DIR"
 
 # Start the chain from the end
 echo "Starting final receiver..."
-../target/debug/byteproc \
+"$BYTEPROC_BIN" \
   --input-type zmq_pull \
   --input-zmq-socket "tcp://*:$PORT2" \
   --input-zmq-bind \
@@ -27,7 +39,7 @@ RECEIVER_PID=$!
 sleep 1
 
 echo "Starting middle processor..."
-../target/debug/byteproc \
+"$BYTEPROC_BIN" \
   --input-type zmq_pull \
   --input-zmq-socket "tcp://*:$PORT1" \
   --input-zmq-bind \
@@ -39,7 +51,7 @@ MIDDLE_PID=$!
 sleep 1
 
 echo "Sending test data..."
-echo "$TEST_DATA" | ../target/debug/byteproc \
+echo "$TEST_DATA" | "$BYTEPROC_BIN" \
   --output-type zmq_push \
   --output-zmq-socket "tcp://localhost:$PORT1" \
   --log-file "$LOG_DIR/sender.log"

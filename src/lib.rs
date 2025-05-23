@@ -171,6 +171,7 @@ pub trait ByteProcessor {
 // -------------- Modules --------------
 
 /// Passthrough
+#[derive(Debug)]
 pub struct Passthrough;
 impl ByteProcessor for Passthrough {
     fn name(&self) -> &'static str { MODULE_PASSTHROUGH }
@@ -180,9 +181,11 @@ impl ByteProcessor for Passthrough {
 }
 
 /// XOR
+#[derive(Debug)]
 pub struct XorModule {
     key: XorKey,
 }
+#[derive(Debug)]
 struct XorKey { key: Vec<u8> }
 impl Drop for XorKey { fn drop(&mut self) { self.key.zeroize(); } }
 impl XorModule {
@@ -214,6 +217,7 @@ impl ByteProcessor for XorModule {
 }
 
 /// Base64
+#[derive(Debug)]
 pub struct Base64Module {
     encode: bool,
     padding: bool,
@@ -536,7 +540,7 @@ impl Config {
     }
     
     /// Validate the configuration
-    fn validate(&self) -> Result<(), ByteProcError> {
+    pub fn validate(&self) -> Result<(), ByteProcError> {
         // Check required fields for specific input/output types
         if self.input_type == InputType::ZmqPull && self.input_zmq_socket.is_none() {
             return Err(ByteProcError::InvalidConfiguration(
@@ -583,7 +587,7 @@ pub struct ModuleRegistry {
     modules: HashMap<&'static str, Box<dyn ByteProcessor>>,
 }
 
-// TODO: get rid of strings
+
 impl ModuleRegistry {
     pub fn new(cfg: &Config) -> Result<Self, ByteProcError> {
         let mut modules: HashMap<&'static str, Box<dyn ByteProcessor>> = HashMap::new();
